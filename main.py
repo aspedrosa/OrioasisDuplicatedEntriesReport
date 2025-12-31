@@ -1,3 +1,4 @@
+import argparse
 import os.path
 import re
 import sys
@@ -7,7 +8,6 @@ from typing import NamedTuple, List, Optional
 import requests
 from bs4 import BeautifulSoup, Tag
 
-EVENT_ID = 3091
 CACHE_RESPONSE_PATH = "cache_response.txt"
 
 class ClubGroup(NamedTuple):
@@ -20,34 +20,45 @@ class RunnerEntry(NamedTuple):
     club_nick: str
     runner_name: str
 
-def main():
-    html = fetch_entries_per_club_page()
+def main(args: argparse.Namespace):
+    html = fetch_entries_per_club_page(args.cache_page, args.event)
 
-    runner_entries = extract_runners_entries_from_html(html)
+    runner_entries = extract_runners_entries_from_html(html, args.event)
 
     duplicates = find_duplicates(runner_entries)
 
     print(duplicates)
+    if args.skip_send_email:
+        return
     #send_duplicates_email(duplicates)
 
-def fetch_entries_per_club_page() -> str:
-    if not os.path.exists(CACHE_RESPONSE_PATH):
-        response = requests.get(f'https://www.orioasis.pt/oasis/entries.php?eventid={EVENT_ID}&action=club_class&order=clubs.nick&task=&sh=&show_details=')
+def _fetch_entries_per_club_page(event_id) -> str:
+    response = requests.get(
+        f'https://www.orioasis.pt/oasis/entries.php?eventid={event_id}&action=club_class&order=clubs.nick&task=&sh=&show_details=')
 
-        if response.status_code != 200:
-            print(f'Error: {response.status_code}', file=sys.stderr)
-            print(f'Response: {response.text}', file=sys.stderr)
-            sys.exit(1)
+    if response.status_code != 200:
+        print(f'Error: {response.status_code}', file=sys.stderr)
+        print(f'Response: {response.text}', file=sys.stderr)
+        sys.exit(1)
 
-        with open(CACHE_RESPONSE_PATH, "w+") as f:
-            f.write(response.text)
+    return response.text
 
-    with open(CACHE_RESPONSE_PATH) as f:
-        response_text = f.read()
+def fetch_entries_per_club_page(cache_entries_page, event_id) -> str:
+    if cache_entries_page:
+        if not os.path.exists(CACHE_RESPONSE_PATH):
+            html = _fetch_entries_per_club_page(event_id)
 
-    return response_text
+            with open(CACHE_RESPONSE_PATH, "w+") as f:
+                f.write(html)
 
-def extract_runners_entries_from_html(html) -> list[RunnerEntry]:
+            return html
+
+        with open(CACHE_RESPONSE_PATH) as f:
+            return f.read()
+    else:
+        return _fetch_entries_per_club_page(event_id)
+
+def extract_runners_entries_from_html(html, event_id) -> list[RunnerEntry]:
     soup = BeautifulSoup(html, 'html.parser')
 
     runners_table = soup.find_all("table", attrs={"class": "TableBorderLight"})[3]
@@ -141,7 +152,7 @@ def extract_runners_entries_from_html(html) -> list[RunnerEntry]:
         #print(club_pay_link)
         club_id = re.search(r'clubid=(-?\d+)', club_pay_link).group(1)
         #print(club_id)
-        club_entries_link = f'https://www.orioasis.pt/oasis/entries.php?action=club_class&eventid={EVENT_ID}&clubid={club_id}#et'
+        club_entries_link = f'https://www.orioasis.pt/oasis/entries.php?action=club_class&eventid={event_id}&clubid={club_id}#et'
         #print(club_entries_link)
 
         for tr in group.trs:
@@ -208,4 +219,11 @@ def send_duplicates_email(duplicates: list[RunnerEntry]) -> None:
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--event', required=True, help='Event id to send duplicates report')
+    parser.add_argument('--cache-page', action='store_true', default=False, help='Cache the entries per club page')
+    parser.add_argument('--skip-send-email', action='store_true', default=False, help='Skip sending email')
+
+    args = parser.parse_args()
+
+    main(args)

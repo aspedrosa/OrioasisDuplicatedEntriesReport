@@ -1,0 +1,20 @@
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  send_report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: 'pip' # caching pip dependencies
+      - run: pip install -r requirements.txt
+      - run: |
+          echo MAIL_TO=${{ vars.MAIL_TO }} >> $GITHUB_ENV
+          echo MAILGUN_DOMAIN=${{ vars.MAILGUN_DOMAIN }} >> $GITHUB_ENV
+          echo MAILGUN_API_KEY=${{ secrets.MAILGUN_API_KEY }} >> $GITHUB_ENV
+      - run: python main.py --event ${{ vars.EVENT_IDS }}
