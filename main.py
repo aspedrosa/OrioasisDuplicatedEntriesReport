@@ -31,6 +31,11 @@ def main(args: argparse.Namespace):
     if args.skip_send_email:
         print(duplicates)
         return
+
+    if not duplicates:
+        print("No duplicates found")
+        return
+
     send_duplicates_email(duplicates)
 
 def _fetch_entries_per_club_page(event_id) -> str:
