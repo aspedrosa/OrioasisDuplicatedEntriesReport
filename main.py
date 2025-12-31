@@ -26,11 +26,11 @@ def main(args: argparse.Namespace):
     runner_entries = extract_runners_entries_from_html(html, args.event)
 
     duplicates = find_duplicates(runner_entries)
+    #print(duplicates)
 
-    print(duplicates)
     if args.skip_send_email:
         return
-    #send_duplicates_email(duplicates)
+    send_duplicates_email(duplicates)
 
 def _fetch_entries_per_club_page(event_id) -> str:
     response = requests.get(
