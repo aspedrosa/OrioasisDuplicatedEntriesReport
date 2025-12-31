@@ -16,7 +16,7 @@ jobs:
           cache: 'pip' # caching pip dependencies
       - run: pip install -r requirements.txt
       - run: |
-          echo MAIL_TO=${{ vars.MAIL_TO }} >> $GITHUB_ENV
-          echo MAILGUN_DOMAIN=${{ vars.MAILGUN_DOMAIN }} >> $GITHUB_ENV
+          echo MAIL_TO=${{ secrets.MAIL_TO }} >> $GITHUB_ENV
+          echo MAILGUN_DOMAIN=${{ secrets.MAILGUN_DOMAIN }} >> $GITHUB_ENV
           echo MAILGUN_API_KEY=${{ secrets.MAILGUN_API_KEY }} >> $GITHUB_ENV
-      - run: python main.py --event ${{ vars.EVENT_IDS }}
+      - run: python main.py --event ${{ vars.EVENT_IDS }} --runner-names-to-ignore-duplicates '${{ secrets.RUNNER_NAMES_TO_IGNORE_DUPLICATES }}'

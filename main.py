@@ -25,10 +25,11 @@ def main(args: argparse.Namespace):
 
     runner_entries = extract_runners_entries_from_html(html, args.event)
 
-    duplicates = find_duplicates(runner_entries)
+    duplicates = find_duplicates(runner_entries, args.runner_names_to_ignore_duplicates)
     #print(duplicates)
 
     if args.skip_send_email:
+        print(duplicates)
         return
     send_duplicates_email(duplicates)
 
@@ -161,7 +162,12 @@ def extract_runners_entries_from_html(html, event_id) -> list[RunnerEntry]:
 
     return runner_entries
 
-def find_duplicates(data: list[RunnerEntry]) -> list[RunnerEntry]:
+def find_duplicates(data: list[RunnerEntry], runner_names_to_ignore_duplicates) -> list[RunnerEntry]:
+    if not runner_names_to_ignore_duplicates:
+        runner_names_to_ignore_duplicates = []
+    else:
+        runner_names_to_ignore_duplicates = runner_names_to_ignore_duplicates[0].split(",")
+
     # print(all_data_tuples)
     data.sort(key=lambda x: x.runner_name)
     # print(all_data_tuples)
@@ -169,8 +175,9 @@ def find_duplicates(data: list[RunnerEntry]) -> list[RunnerEntry]:
     duplicates = []
     for current_runner in data:
         if previous_runner and previous_runner.runner_name == current_runner.runner_name:
-            duplicates.append(previous_runner)
-            duplicates.append(current_runner)
+            if current_runner.runner_name not in runner_names_to_ignore_duplicates:
+                duplicates.append(previous_runner)
+                duplicates.append(current_runner)
             # print(" + ".join(previous_runner))
             # print(" + ".join(current_runner))
 
@@ -223,6 +230,7 @@ if __name__ == '__main__':
     parser.add_argument('--event', required=True, help='Event id to send duplicates report')
     parser.add_argument('--cache-page', action='store_true', default=False, help='Cache the entries per club page')
     parser.add_argument('--skip-send-email', action='store_true', default=False, help='Skip sending email')
+    parser.add_argument('--runner-names-to-ignore-duplicates', nargs=1, help='Comma-separated list of runner names to ignore duplicates')
 
     args = parser.parse_args()
 
