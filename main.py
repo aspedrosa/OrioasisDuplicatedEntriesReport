@@ -229,6 +229,9 @@ def send_duplicates_email(duplicates: list[RunnerEntry]) -> None:
     print(response.status_code)
     print(response.text)
 
+    if response.status_code != 200:
+        sys.exit(1)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
