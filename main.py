@@ -1,5 +1,6 @@
 import argparse
 import os.path
+import pprint
 import re
 import sys
 from math import ceil
@@ -19,24 +20,52 @@ class RunnerEntry(NamedTuple):
     club_entries_link: str
     club_nick: str
     runner_name: str
+    runner_si: str
 
 def main(args: argparse.Namespace):
     html = fetch_entries_per_club_page(args.cache_page, args.event)
 
     runner_entries = extract_runners_entries_from_html(html, args.event)
 
-    duplicates = find_duplicates(runner_entries, args.runner_names_to_ignore_duplicates)
-    #print(duplicates)
+    fields_titles = {
+        "runner_name": "Duplicates by Name",
+        "runner_si": "Duplicates by SI",
+    }
+
+    duplicates_fields = [
+        ("runner_name", runner_entries),
+        ("runner_si", [r for r in runner_entries if r.runner_si != "Aluguer"]),
+    ]
+
+    duplicates_by_field_collection = []
+    for field_name, runner_entries in duplicates_fields:
+        # TODO be able to ignore SIs
+        duplicates_by_field = find_duplicates_by_field(runner_entries, field_name, args.runner_names_to_ignore_duplicates)
+        #print(f"Total entries by {field_name}: {len(duplicates_by_field)}")
+
+        if not duplicates_by_field:
+            continue
+
+        duplicates_by_field_collection.append((field_name, duplicates_by_field))
 
     if args.skip_send_email:
-        print(duplicates)
+        for field_name, duplicates in duplicates_by_field_collection:
+            print(f"Duplicates by {field_name}:")
+            pprint.pprint(duplicates)
         return
 
-    if not duplicates:
+    if not duplicates_by_field_collection:
         print("No duplicates found")
         return
 
-    send_duplicates_email(duplicates)
+    duplicates_tables = []
+    for field_name, duplicates in duplicates_by_field_collection:
+        #print(field_name)
+        #print(duplicates)
+        duplicates_tables.append(generate_duplicates_table(duplicates, field_name, fields_titles[field_name]))
+
+    #print(duplicates_tables)
+    send_duplicates_email(duplicates_tables)
 
 def _fetch_entries_per_club_page(event_id) -> str:
     response = requests.get(
@@ -162,25 +191,30 @@ def extract_runners_entries_from_html(html, event_id) -> list[RunnerEntry]:
         #print(club_entries_link)
 
         for tr in group.trs:
-            runner_name = tr.find("td").text.strip()
-            runner_entries.append(RunnerEntry(club_entries_link, club_nick, runner_name))
+            tds = tr.find_all("td", recursive=False)
+            runner_name = tds[0].text.strip()
+            runner_si = tds[4].text.strip()
+            runner_entries.append(RunnerEntry(club_entries_link, club_nick, runner_name, runner_si))
 
     return runner_entries
 
-def find_duplicates(data: list[RunnerEntry], runner_names_to_ignore_duplicates) -> list[RunnerEntry]:
-    if not runner_names_to_ignore_duplicates:
-        runner_names_to_ignore_duplicates = []
+def find_duplicates_by_field(data: list[RunnerEntry], fild_name, values_to_ignore_duplicates) -> list[RunnerEntry]:
+    if not values_to_ignore_duplicates:
+        values_to_ignore_duplicates = []
     else:
-        runner_names_to_ignore_duplicates = runner_names_to_ignore_duplicates[0].split(",")
+        values_to_ignore_duplicates = values_to_ignore_duplicates[0].split(",")
+
+    def get_value(runner: RunnerEntry):
+        return getattr(runner, fild_name)
 
     # print(all_data_tuples)
-    data.sort(key=lambda x: x.runner_name)
+    data.sort(key=lambda x: get_value(x))
     # print(all_data_tuples)
     previous_runner: Optional[RunnerEntry] = None
     duplicates = []
     for current_runner in data:
-        if previous_runner and previous_runner.runner_name == current_runner.runner_name:
-            if current_runner.runner_name not in runner_names_to_ignore_duplicates:
+        if previous_runner and get_value(previous_runner) == get_value(current_runner):
+            if get_value(current_runner) not in values_to_ignore_duplicates:
                 duplicates.append(previous_runner)
                 duplicates.append(current_runner)
             # print(" + ".join(previous_runner))
@@ -190,21 +224,30 @@ def find_duplicates(data: list[RunnerEntry], runner_names_to_ignore_duplicates) 
 
     return duplicates
 
+def generate_duplicates_table(duplicates, field_name, field_title):
+    remaining_fields = ["club_nick", "runner_name", "runner_si"]
+    remaining_fields.remove(field_name)
 
-def send_duplicates_email(duplicates: list[RunnerEntry]) -> None:
     # Build HTML Table
     table_rows = ""
     for entry in duplicates:
-        table_rows += f"<tr><td><a href='{entry.club_entries_link}'>Link</a></td><td>{entry.club_nick}</td><td>{entry.runner_name}</td></tr>"
+        table_rows += "<tr>"
+        table_rows += f"<td><a href='{entry.club_entries_link}'>Link</a></td>"
+        table_rows += f"<td>{getattr(entry, field_name)}</td>"
+        for field in remaining_fields:
+            table_rows += f"<td>{getattr(entry, field)}</td>"
+        table_rows += "</tr>"
 
-    email_content = f"""
-    <h2>Duplicated Entries Report</h2>
+    remaining_fields_ths = "\n".join(f"<th>{field}</th>" for field in remaining_fields)
+
+    table_html = f"""
+    <h3>{field_title}</h3>
     <table border="1" style="border-collapse: collapse; width: 100%;">
         <thead>
             <tr style="background-color: #f2f2f2;">
-                <th>Entries Link</th>
-                <th>Club Nick</th>
-                <th>Runner Name</th>
+                <th>Club Entries Link</th>
+                <th>{field_name}</th>
+                {remaining_fields_ths}
             </tr>
         </thead>
         <tbody>
@@ -212,6 +255,13 @@ def send_duplicates_email(duplicates: list[RunnerEntry]) -> None:
         </tbody>
     </table>
     """
+
+    return table_html
+
+
+def send_duplicates_email(tables: list[str]) -> None:
+    email_content = "<h2>Duplicated Entries Report</h2>\n"
+    email_content += "\n".join(tables)
 
     mailgun_domain = os.environ['MAILGUN_DOMAIN']
 
