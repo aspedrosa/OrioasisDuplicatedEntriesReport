@@ -23,7 +23,7 @@ class RunnerEntry(NamedTuple):
     runner_si: str
 
 def main(args: argparse.Namespace):
-    html = fetch_entries_per_club_page(args.cache_page, args.event)
+    html = fetch_entries_per_club_html_page(args.cache_page, args.event)
 
     runner_entries = extract_runners_entries_from_html(html, args.event)
 
@@ -67,7 +67,8 @@ def main(args: argparse.Namespace):
     #print(duplicates_tables)
     send_duplicates_email(duplicates_tables)
 
-def _fetch_entries_per_club_page(event_id) -> str:
+def _fetch_entries_per_club_html_page(event_id) -> str:
+    """Fetches entries per club page from OriOasis"""
     response = requests.get(
         f'https://www.orioasis.pt/oasis/entries.php?eventid={event_id}&action=club_class&order=clubs.nick&task=&sh=&show_details=')
 
@@ -78,10 +79,11 @@ def _fetch_entries_per_club_page(event_id) -> str:
 
     return response.text
 
-def fetch_entries_per_club_page(cache_entries_page, event_id) -> str:
+def fetch_entries_per_club_html_page(cache_entries_page, event_id) -> str:
+    """Returns cached or fetched event entries html page"""
     if cache_entries_page:
         if not os.path.exists(CACHE_RESPONSE_PATH):
-            html = _fetch_entries_per_club_page(event_id)
+            html = _fetch_entries_per_club_html_page(event_id)
 
             with open(CACHE_RESPONSE_PATH, "w+") as f:
                 f.write(html)
@@ -91,19 +93,31 @@ def fetch_entries_per_club_page(cache_entries_page, event_id) -> str:
         with open(CACHE_RESPONSE_PATH) as f:
             return f.read()
     else:
-        return _fetch_entries_per_club_page(event_id)
+        return _fetch_entries_per_club_html_page(event_id)
 
 def extract_runners_entries_from_html(html, event_id) -> list[RunnerEntry]:
     soup = BeautifulSoup(html, 'html.parser')
 
-    runners_table = soup.find_all("table", attrs={"class": "TableBorderLight"})[3]
     """
+    Get all tables on the page. The one we want is the 4th one, which contains runners entries
     1st table clubs
     2nd table classes
     3rd table countries
     4th table runners
     """
+    runners_table = soup.find_all("table", attrs={"class": "TableBorderLight"})[3]
 
+    """
+    From the table above, lets gather all the information.
+    In reality, each club entries is a table within that big table.
+    
+    Club information is stored in thead elements within these subtables.
+    Runners information is stored in tr elements within these subtables.
+    At the bottom of each table there are two rows with no border, containing the **row-no-border** class.
+    One is just an empty line, with no inner text which we discard.
+    The other contains "View entries of other clubs / classes" and "Pay entries" links. For this "Pay entries" link,
+     we extract the club id from the href attribute.
+    """
     childs = list(runners_table.children)
     childs = [
         child
@@ -118,9 +132,9 @@ def extract_runners_entries_from_html(html, event_id) -> list[RunnerEntry]:
                 )
             )
     ]
-    childs = childs[1:]  # skip the first tr, it is the runners table header
+    childs = childs[1:]  # skip the first tr, it is the runners, big table, table header
 
-    # groups elements by club
+    # From the gathered rows, lets group athletes rows per club
     club_groups: List[ClubGroup] = []
     club_links = None
     club_thead = None
@@ -131,7 +145,7 @@ def extract_runners_entries_from_html(html, event_id) -> list[RunnerEntry]:
 
         if child.name == 'tr' and 'row-no-border' in child.attrs.get('class', []):
             # a club group starts with a club links element, next is a thead where we can find club's name.
-            # thats why we skip 2 later on this if block
+            # thats why we skip 2 later, on this if block
 
             if club_links is not None:
                 club_groups.append(ClubGroup(club_links, club_thead, club_runners_trs))
