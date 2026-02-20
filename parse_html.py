@@ -25,11 +25,16 @@ class LicenseStatus(enum.Enum):
     RENEWED = 1
 
 class StageEntry:
-    def __init__(self, class_name: str):
-        self.class_name = class_name
+    def __init__(self, enrolled: bool):
+        self.enrolled = enrolled
+        self.class_name: Optional[str] = None
         self.date_of_entry: Optional[datetime.date] = None
         self.amount_to_pay: Optional[float] = None
         self.with_discount: Optional[bool] = None
+
+    def set_class_name(self, class_name: str) -> "StageEntry":
+        self.class_name = class_name
+        return self
 
     def set_date_of_entry(self, date_of_entry: datetime.date) -> "StageEntry":
         self.date_of_entry = date_of_entry
@@ -284,11 +289,15 @@ def _parse(club_groups, event_id: str, detailed_view: bool) -> list[ClubEntries]
 
             stages = []
             for i in range(5, len(tds) - 1):
-                stage = tds[i].text.strip()
-                stages.append(StageEntry(stage) if stage != "-" else None)
+                stage_element = tds[i]
+                class_name = stage_element.find("a").text.strip()
+                stage_entry = StageEntry(enrolled=class_name != "-")
 
                 if detailed_view:
-                    pass  # TODO fetch stage information
+                    # TODO fetch stage information
+                    pass
+
+                stages.append(stage_entry)
 
             state = EntryState.OK.value if tds[-1].text.strip() == "OK" else EntryState.AVO.value  # TODO conversion for other states
 
