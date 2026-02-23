@@ -21,6 +21,7 @@ class EntryState(enum.Enum):
     AVC = 2
 
 class LicenseStatus(enum.Enum):
+    NONE = -1
     NOT_RENEWED = 0
     RENEWED = 1
 
@@ -28,7 +29,7 @@ class StageEntry:
     def __init__(self, enrolled: bool):
         self.enrolled = enrolled
         self.class_name: Optional[str] = None
-        self.date_of_entry: Optional[datetime.date] = None
+        self.date_of_entry: Optional[datetime.datetime] = None
         self.amount_to_pay: Optional[float] = None
         self.with_discount: Optional[bool] = None
 
@@ -36,7 +37,7 @@ class StageEntry:
         self.class_name = class_name
         return self
 
-    def set_date_of_entry(self, date_of_entry: datetime.date) -> "StageEntry":
+    def set_date_of_entry(self, date_of_entry: datetime.datetime) -> "StageEntry":
         self.date_of_entry = date_of_entry
         return self
 
@@ -59,24 +60,30 @@ class Entry:
         name: str,
         birth_year: int,
         state: int,
-        license_type: Optional[str] = None,
-        license_number: Optional[int] = None,
         SI: int | list[int | None] | None = None,
         stages_classes: list[Optional[StageEntry]] | None = None,
     ):
         self.name = name
         self.birth_year = birth_year
-        self.license_type = license_type
-        self.license_number = license_number
         self.SI = SI
         self.stages_classes = stages_classes
         self.state = state
+        self.license_type: Optional[str] = None
+        self.license_number: Optional[int] = None
         self.license_status: Optional[LicenseStatus] = None
         self.extras: Optional[list[str]] = None
         self.total_extras_to_pay: Optional[float] = None
         self.total_to_pay: Optional[float] = None
         self.amount_paid: Optional[Payment] = None
         self.payment_difference: Optional[float] = None
+
+    def set_license_type(self, license_type: str) -> "Entry":
+        self.license_type = license_type
+        return self
+
+    def set_license_number(self, license_number: int) -> "Entry":
+        self.license_number = license_number
+        return self
 
     def set_license_status(self, license_status: LicenseStatus) -> "Entry":
         self.license_status = license_status
@@ -196,7 +203,7 @@ def _group(childs, detailed_view):
             # We process those two rows here, thats why we skip 2 later, on this if block
 
             if club_links is not None:
-                club_groups.append(ClubGroup(club_links, club_thead, club_runners_trs))
+                club_groups.append(ClubGroup(club_links, club_thead, club_runners_trs, club_payment_totals))
                 club_runners_trs = []
 
             club_links = child
@@ -222,7 +229,7 @@ def _group(childs, detailed_view):
 
     return club_groups
 
-def _parse(club_groups, event_id: str, detailed_view: bool) -> list[ClubEntries]:
+def _parse(club_groups: list[ClubGroup], detailed_view: bool) -> list[ClubEntries]:
     """
     TODO
     """
@@ -234,7 +241,7 @@ def _parse(club_groups, event_id: str, detailed_view: bool) -> list[ClubEntries]
         club_info = [e.strip() for e in club_info.split(" / ")]  # orioasis separates club name and nick with " / "
 
         club_name = club_info[0]
-        club_license_id = club_name[1:club_name.find("]")]
+        club_license_id = int(club_name[1:club_name.find("]")])
         club_name = club_name[club_name.find("]")+1:].strip()  # remove the club license id
 
         try:
@@ -264,8 +271,13 @@ def _parse(club_groups, event_id: str, detailed_view: bool) -> list[ClubEntries]
         #print(club_id)
 
         if detailed_view:
-            # TODO set payment totals
-            pass
+            payment_totals_tds = group.payment_totals.findAll("td", recursive=False)
+            total_extras = payment_totals_tds[1].text.strip().replace(",", ".")
+            total_to_pay = payment_totals_tds[2].text.strip().replace(",", ".")
+            paid = payment_totals_tds[3].text.strip().replace(",", ".")
+            difference = payment_totals_tds[4].text.strip().replace(",", ".")
+            payment_totals = PaymentTotals(float(total_extras), float(total_to_pay), float(paid), float(difference))
+            group.payment_totals = payment_totals
 
         club_entries = ClubEntries(club_license_id, club_orioasis_id, club_name, club_nick, club_country, club_country_code)
 
@@ -275,36 +287,63 @@ def _parse(club_groups, event_id: str, detailed_view: bool) -> list[ClubEntries]
             runner_name = tds[0].text.strip()
             birth_year = int(tds[1].text.strip())
 
-            license_type = tds[2].text.strip()
-            license_type = license_type if license_type else None
+            license_type = tds[2].text.strip()  # TODO handle IOFID
 
-            license_id = tds[3]
-            if detailed_view:
-                pass  # TODO handle license id and state
-            else:
-                license_id = license_id.text.strip()
-                license_id = int(license_id) if license_id else None
+            license_numbers_td = tds[3]
 
             runner_si = tds[4].text.strip()  # TODO support multiple SI per stages
 
             stages = []
             for i in range(5, len(tds) - 1):
                 stage_element = tds[i]
+
+                if stage_element.attrs.get("class")[0].startswith("TableCellState"):
+                    break  # we reached the state column
+
                 class_name = stage_element.find("a").text.strip()
                 stage_entry = StageEntry(enrolled=class_name != "-")
+                if stage_entry.enrolled:
+                    stage_entry.set_class_name(class_name)
 
                 if detailed_view:
-                    # TODO fetch stage information
-                    pass
+                    entry_date_span = stage_element.find("small").find("span")
+                    entry_date = entry_date_span.text.strip()
+                    entry_date = datetime.datetime.strptime(entry_date, "%d/%b %H:%M")
+                    stage_entry.set_date_of_entry(entry_date)
+
+                    if stage_entry.enrolled:
+                        with_discount = entry_date_span.attrs.get("class") != "TextRed"  # TODO check if its correct
+                        stage_entry.set_with_discount(with_discount)
+
+                        amount_to_pay = float(
+                            stage_element.find("small").text.split(",")  # "(data, value€)"
+                            [-1]  # get only the ", value)" part
+                            .replace("€)", "")  # remove the trailing "€)"
+                            .strip()  # remove whitespace
+                            .replace(",", ",")
+                        )  # convert to float
+                        stage_entry.set_amount_to_pay(amount_to_pay)
 
                 stages.append(stage_entry)
 
             state = EntryState.OK.value if tds[-1].text.strip() == "OK" else EntryState.AVO.value  # TODO conversion for other states
 
-            entry = Entry(runner_name, birth_year, state, license_type, license_id, runner_si, stages)
+            entry = Entry(runner_name, birth_year, state, runner_si, stages)
+
+            #if license_type:   # TODO
+            #    entry.set_license_type(license_type)
+            #
+            #    license_number = license_numbers_td.text.strip()
+            #    license_number = int(license_number) if license_numbers_td else None
+            #    entry.set_license_number(license_number)
 
             if detailed_view:
-                # TODO
+                license_renewed = None
+                if detailed_view:
+                    license_renewed = license_numbers_td.find("i", attrs={"title": "Renewed"}) is not None
+                entry.set_license_status(LicenseStatus.RENEWED if license_renewed else LicenseStatus.NOT_RENEWED if license_renewed is not None else LicenseStatus.NONE)
+
+                # TODO process extras
                 pass
 
             club_entries.add_entry(entry)
@@ -314,11 +353,11 @@ def _parse(club_groups, event_id: str, detailed_view: bool) -> list[ClubEntries]
     return clubs_entries
 
 
-def extract_entries(html: str, event_id: str, detailed_view: bool = False) -> list[ClubEntries]:
+def extract_entries(html: str, detailed_view: bool = False) -> list[ClubEntries]:
     childs = _extract(html)
 
     club_groups = _group(childs, detailed_view)
 
-    entries = _parse(club_groups, event_id, detailed_view)
+    entries = _parse(club_groups, detailed_view)
 
     return entries
